@@ -1,0 +1,40 @@
+name: Update CPI data from CBS
+
+# מעדכן את data/IL.json ממדד המחירים לצרכן של הלמ"ס.
+# הלמ"ס מפרסמת ב-15 בחודש בשעה 18:30; הריצה מכסה 15–18 בחודש (05:00 UTC ≈ 08:00 בישראל)
+# והיא אידמפוטנטית — commit מתבצע רק אם הנתונים השתנו. אפשר גם להריץ ידנית.
+
+on:
+  schedule:
+    - cron: '0 5 15,16,17,18 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch latest CPI from CBS
+        run: python scripts/update_cbs.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "cpi-bot"
+          git config user.email "cpi-bot@users.noreply.github.com"
+          if [ -n "$(git status --porcelain data/IL.json)" ]; then
+            git add data/IL.json
+            git commit -m "chore: update CPI data from CBS ($(date -u +%Y-%m-%d))"
+            git push
+          else
+            echo "No change in data/IL.json"
+          fi

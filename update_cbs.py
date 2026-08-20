@@ -17,7 +17,7 @@ import os, json, sys, datetime
 from urllib.request import Request, urlopen
 
 CODE  = os.environ.get("CBS_CODE", "120010")
-START = os.environ.get("CBS_START", "01-2009")
+START = os.environ.get("CBS_START", "01-2015")
 # נקודת הקצה הרשמית של הלמ"ס. ניתן לעקוף עם CBS_URL.
 URL = os.environ.get("CBS_URL",
     "https://api.cbs.gov.il/index/data/price?id={code}&format=json&download=false&startPeriod={start}"

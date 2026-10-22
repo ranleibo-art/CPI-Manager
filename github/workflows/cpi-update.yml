@@ -1,0 +1,4 @@
+update CPI data from CBS
+
+on:
+workflow_dispatch:

@@ -1070,6 +1070,25 @@ async function initDashboard() {
             });
         }
         DATA_JSON_LOADED = true;
+        // רבעונים ושנים שעדיין לא בטבלאות המוטמעות נגזרים מהסדרה החודשית, באותה מוסכמה:
+        // רבעון = מדד בגין החודש האמצעי של סוף הרבעון (פבר'/מאי/אוג'/נוב'), שנה = מדד בגין נובמבר.
+        const moIdx = Object.fromEntries(c.monthly_exp);
+        const lastDay = (m, y) => new Date(y, m, 0).getDate();
+        const years = [...new Set(c.monthly_exp.map(r => +r[0].split('.')[2]))];
+        const haveQ = new Set(c.quarterly.map(r => r.q));
+        const haveY = new Set(c.annual.map(r => r.yr));
+        for (const y of years) {
+          [2, 5, 8, 11].forEach((m, i) => {
+            const v = moIdx[`01.${String(m).padStart(2,'0')}.${y}`];
+            const q = `Q${i+1}-${y}`;
+            if (v != null && !haveQ.has(q))
+              c.quarterly.push({q, date:`${lastDay(m,y)}.${String(m).padStart(2,'0')}.${y}`, idx:v});
+          });
+          const nov = moIdx[`01.11.${y}`];
+          if (nov != null && !haveY.has(y)) c.annual.push({yr:y, date:`30.11.${y}`, idx:nov});
+        }
+        c.quarterly.sort((a, b) => { const [qa, ya] = a.q.split('-'), [qb, yb] = b.q.split('-'); return (+yb - +ya) || (qb < qa ? -1 : qb > qa ? 1 : 0); });
+        c.annual.sort((a, b) => b.yr - a.yr);
       }
       if (d.exact)     { c.exact = c.exact || {};     for (const k in d.exact)     if (!(k in c.exact))     c.exact[k]     = d.exact[k]; }
       if (d.published) { c.published = c.published || {}; for (const k in d.published) if (!(k in c.published)) c.published[k] = d.published[k]; }

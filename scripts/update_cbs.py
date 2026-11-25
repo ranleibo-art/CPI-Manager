@@ -49,7 +49,16 @@ def fetch(url):
 def walk(obj, out):
     """פירסור גמיש: מאתר רשומות חודשיות (תאריך + ערך מדד + אחוזים) בכל מבנה JSON."""
     if isinstance(obj, dict):
-        date = obj.get("date") or obj.get("Date") or obj.get("month") or obj.get("period")
+        date = None
+        # מבנה הלמ"ס: {"year": 2026, "month": 7, "percent": .., "currBase": {"value": ..}}
+        yr, mo = num(obj.get("year")), num(obj.get("month"))
+        if yr and mo and 1900 < yr < 2100 and 1 <= mo <= 12:
+            date = f"{int(yr)}-{int(mo):02d}"
+        if date is None:
+            for k in ("date", "Date", "period", "month"):
+                v = obj.get(k)
+                if isinstance(v, str) and ("-" in v or "/" in v):
+                    date = v; break
         val = None
         for k in ("value", "Value", "currBaseValue", "index"):
             if k in obj and num(obj[k]) is not None:
@@ -57,7 +66,7 @@ def walk(obj, out):
         if val is None and isinstance(obj.get("currBase") or obj.get("CurrBase"), dict):
             val = num((obj.get("currBase") or obj.get("CurrBase")).get("value"))
         if date and val is not None:
-            m = next((num(obj[k]) for k in ("percentMonth","PercentMonth","monthlyChange","percent_month") if num(obj.get(k)) is not None), None)
+            m = next((num(obj[k]) for k in ("percent","percentMonth","PercentMonth","monthlyChange","percent_month") if num(obj.get(k)) is not None), None)
             y = next((num(obj[k]) for k in ("percentYear","PercentYear","yearlyChange","percent_year","percent12") if num(obj.get(k)) is not None), None)
             out.append({"date": str(date), "value": val, "m": m, "y12": y})
         for v in obj.values():
@@ -92,6 +101,16 @@ def build():
     if not by_date:
         raise SystemExit("ERROR: no CPI records parsed from CBS response — check schema/URL")
 
+    # מיזוג עם הקובץ הקיים: חודש שלא חזר בתשובה (למשל בגלל עימוד) לא נמחק
+    try:
+        prev_data = json.load(open(OUT, encoding="utf-8"))
+        for d, v in prev_data.get("monthly", []):
+            if d not in by_date:
+                pub = prev_data.get("published", {}).get(d, {})
+                by_date[d] = {"value": v, "m": pub.get("m"), "y12": pub.get("y12")}
+    except (OSError, ValueError):
+        pass
+
     dates = sorted(by_date, key=key_desc, reverse=True)   # מהחדש לישן
     monthly = [[d, round(by_date[d]["value"], 4)] for d in dates]
     lut = {d: by_date[d]["value"] for d in dates}
@@ -119,7 +138,7 @@ def build():
     return {
         "source": "live (api.cbs.gov.il)",
         "agency": "CBS",
-        "asof": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "asof": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "monthly": monthly,
         "exact": exact,
         "published": published,
@@ -128,6 +147,13 @@ def build():
 
 def main():
     data = build()
+    try:
+        old = json.load(open(OUT, encoding="utf-8"))
+        if all(old.get(k) == data[k] for k in ("monthly", "exact", "published")):
+            print(f"no change: newest {data['monthly'][0]}")
+            return
+    except (OSError, ValueError):
+        pass
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)

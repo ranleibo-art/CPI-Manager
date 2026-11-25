@@ -68,7 +68,9 @@ def walk(obj, out):
         if date and val is not None:
             m = next((num(obj[k]) for k in ("percent","percentMonth","PercentMonth","monthlyChange","percent_month") if num(obj.get(k)) is not None), None)
             y = next((num(obj[k]) for k in ("percentYear","PercentYear","yearlyChange","percent_year","percent12") if num(obj.get(k)) is not None), None)
-            out.append({"date": str(date), "value": val, "m": m, "y12": y})
+            cb = obj.get("currBase") or obj.get("CurrBase")
+            base = str(cb.get("baseDesc") or "") if isinstance(cb, dict) else ""
+            out.append({"date": str(date), "value": val, "m": m, "y12": y, "base": base})
         for v in obj.values():
             walk(v, out)
     elif isinstance(obj, list):
@@ -101,15 +103,37 @@ def build():
     if not by_date:
         raise SystemExit("ERROR: no CPI records parsed from CBS response — check schema/URL")
 
-    # מיזוג עם הקובץ הקיים: חודש שלא חזר בתשובה (למשל בגלל עימוד) לא נמחק
+    # מיזוג עם הקובץ הקיים. חשוב: הלמ"ס מחזירה כל חודש בבסיס שהיה בתוקף באותו זמן
+    # (למשל 2024 בבסיס ממוצע 2022), ולכן ערך מהתשובה לחודש קיים לא דורס את הערך
+    # השמור (שכבר בבסיס 2024). מהתשובה נלקחים רק: חודשים חדשים + אחוזי השינוי.
+    prev_data = {}
     try:
         prev_data = json.load(open(OUT, encoding="utf-8"))
-        for d, v in prev_data.get("monthly", []):
-            if d not in by_date:
-                pub = prev_data.get("published", {}).get(d, {})
-                by_date[d] = {"value": v, "m": pub.get("m"), "y12": pub.get("y12")}
     except (OSError, ValueError):
         pass
+    prev_mo = dict(prev_data.get("monthly", []))
+    prev_ex = prev_data.get("exact", {})
+    prev_pub = prev_data.get("published", {})
+    latest = max(prev_mo, key=key_desc) if prev_mo else None
+    merged = {}
+    for d, v in prev_mo.items():
+        api = by_date.get(d, {})
+        pub = prev_pub.get(d, {})
+        merged[d] = {"value": v,
+                     "m": api.get("m") if api.get("m") is not None else pub.get("m"),
+                     "y12": api.get("y12") if api.get("y12") is not None else pub.get("y12")}
+    for d in sorted(by_date, key=key_desc):
+        if d in merged or (latest and key_desc(d) <= key_desc(latest)):
+            continue
+        r = by_date[d]
+        if r.get("base") and "2024" not in r["base"]:
+            print(f"skip {d}: base '{r['base']}' is not 2024", file=sys.stderr); continue
+        # בדיקת סבירות: קפיצה של מעל 3% מול החודש הקודם = כנראה בסיס אחר
+        ref = max(merged, key=key_desc) if merged else None
+        if ref and abs(r["value"] / merged[ref]["value"] - 1) > 0.03:
+            raise SystemExit(f"ERROR: {d}={r['value']} vs {ref}={merged[ref]['value']} — jump >3%, base mismatch?")
+        merged[d] = r
+    by_date = merged
 
     dates = sorted(by_date, key=key_desc, reverse=True)   # מהחדש לישן
     monthly = [[d, round(by_date[d]["value"], 4)] for d in dates]
@@ -118,7 +142,7 @@ def build():
     exact, published = {}, {}
     for i, d in enumerate(dates):
         v = round(by_date[d]["value"], 4)
-        exact[d] = {b: round(v / BASE_V[b] * 100, 4) for b in EXPORT_BASES}
+        exact[d] = prev_ex.get(d) or {b: round(v / BASE_V[b] * 100, 4) for b in EXPORT_BASES}
         # אחוז חודשי: מהלמ"ס אם קיים, אחרת חישוב מול החודש הקודם (עיגול לספרה)
         prev = dates[i + 1] if i + 1 < len(dates) else None
         mchg = by_date[d]["m"]
